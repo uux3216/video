@@ -7,7 +7,7 @@ import shutil
 app = Flask(__name__)
 
 # Path to your cookies file (update if needed)
-COOKIE_FILE = "youtube_cookies.txt"
+COOKIE_FILE = "cookies.txt"
 
 def get_ydl_opts(format_id=None, download=False, tmpdir=None):
     opts = {
@@ -94,3 +94,4 @@ def download():
 if __name__ == "__main__":
     print(f"Make sure your cookies file is here: {os.path.abspath(COOKIE_FILE)}")
     app.run(host="0.0.0.0", port=8000, debug=True)
+

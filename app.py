@@ -5,6 +5,8 @@ import tempfile
 
 app = Flask(__name__)
 
+COOKIE_FILE = "youtube_cookies.txt"  # Path to your exported cookies file
+
 @app.route('/', methods=['GET', 'POST'])
 def index():
     error = None
@@ -15,8 +17,12 @@ def index():
         if not url:
             error = "Please enter a URL"
         else:
+            ydl_opts = {
+                "quiet": True,
+                "cookiefile": COOKIE_FILE  # Use cookies for login
+            }
             try:
-                with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=False)
                 # filter formats (progressive mp4)
                 for f in info.get('formats', []):
@@ -39,12 +45,11 @@ def download():
     if not url or not format_id:
         return redirect(url_for('index'))
 
-    # create temp file
     tmpdir = tempfile.mkdtemp()
-    # to save file in temp
     ydl_opts = {
         "format": format_id,
         "outtmpl": os.path.join(tmpdir, "%(title)s.%(ext)s"),
+        "cookiefile": COOKIE_FILE  # Use cookies for login
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -53,9 +58,8 @@ def download():
     except Exception as e:
         return f"Download failed: {e}", 500
 
-    # send file to user
     return send_file(
-        filename, 
+        filename,
         as_attachment=True,
         download_name=os.path.basename(filename)
     )

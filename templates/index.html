@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>YouTube Downloader</title>
+</head>
+<body>
+    <h1>YouTube Downloader</h1>
+    {% if error %}
+        <p style="color:red;">{{ error }}</p>
+    {% endif %}
+    <form method="post">
+        <input type="text" name="url" placeholder="Enter YouTube URL" size="60"
+            value="{{ request.form.get('url') or '' }}">
+        <button type="submit">Get Formats</button>
+    </form>
+
+    {% if info %}
+        <h2>{{ info.title }}</h2>
+        <p>Available formats:</p>
+        <form method="post" action="/download">
+            <input type="hidden" name="url" value="{{ request.form.get('url') }}">
+            {% for f in formats %}
+                <div>
+                    <input type="radio" name="format_id" value="{{ f.format_id }}"
+                        id="{{ f.format_id }}">
+                    <label for="{{ f.format_id }}">
+                        {{ f.resolution or "?" }}p — {{ f.filesize }} MB — format {{ f.format_id }}
+                    </label>
+                </div>
+            {% endfor %}
+            <button type="submit">Download Selected Format</button>
+        </form>
+    {% endif %}
+</body>
+</html>

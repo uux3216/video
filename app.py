@@ -3,11 +3,29 @@ import yt_dlp
 import os
 import tempfile
 import shutil
+import time
+from functools import wraps
 
 app = Flask(__name__)
 
-# Path to your cookies file (update if needed)
 COOKIE_FILE = "cookies.txt"
+
+# Simple in-memory cache: video_url -> info (just for duration of service)
+cache = {}
+
+def timeout(seconds=20):
+    """Simple timeout decorator for functions."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            start = time.time()
+            result = func(*args, **kwargs)
+            elapsed = time.time() - start
+            if elapsed > seconds:
+                raise TimeoutError(f"Operation took too long ({elapsed:.1f}s)")
+            return result
+        return wrapper
+    return decorator
 
 def get_ydl_opts(format_id=None, download=False, tmpdir=None):
     opts = {
@@ -33,11 +51,22 @@ def index():
             error = "Please enter a URL"
         else:
             try:
-                ydl_opts = get_ydl_opts()
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
+                # Check cache first
+                if url in cache:
+                    info = cache[url]
+                else:
+                    # Fetch info with timeout
+                    @timeout(seconds=25)
+                    def fetch_info(u):
+                        ydl_opts = get_ydl_opts()
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            return ydl.extract_info(u, download=False)
+                    
+                    info = fetch_info(url)
+                    # Cache it
+                    cache[url] = info
 
-                # Filter progressive mp4 formats (video + audio)
+                # Filter progressive mp4 formats
                 for f in info.get('formats', []):
                     if (f.get('ext') == 'mp4' and
                         f.get('acodec') != 'none' and
@@ -47,15 +76,19 @@ def index():
                             "resolution": f.get("height", "N/A"),
                             "filesize": round((f.get("filesize") or f.get("filesize_approx") or 0) / (1024*1024), 2)
                         })
+                        # Limit number of formats to avoid long listing loops
+                        if len(formats) >= 5:
+                            break
 
                 if not formats:
                     error = "No progressive mp4 formats available for this video."
 
+            except TimeoutError as te:
+                error = f"Operation timed out: {te}"
             except Exception as e:
                 error = f"Error fetching video info: {e}"
 
     return render_template("index.html", info=info, formats=formats, error=error)
-
 
 @app.route('/download', methods=['POST'])
 def download():
@@ -64,7 +97,6 @@ def download():
     if not url or not format_id:
         return redirect(url_for('index'))
 
-    # Create a temp directory for download
     tmpdir = tempfile.mkdtemp()
     ydl_opts = get_ydl_opts(format_id=format_id, download=True, tmpdir=tmpdir)
 
@@ -73,25 +105,22 @@ def download():
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
     except Exception as e:
-        shutil.rmtree(tmpdir)  # clean up temp dir on error
+        shutil.rmtree(tmpdir)
         return f"Download failed: {e}", 500
 
-    # Send file to user and cleanup temp after response is done
+    # Send file
     response = send_file(
         filename,
         as_attachment=True,
         download_name=os.path.basename(filename)
     )
-    
-    # Cleanup temp directory after request is complete
+
     @response.call_on_close
     def cleanup():
         shutil.rmtree(tmpdir)
 
     return response
 
-
 if __name__ == "__main__":
-    print(f"Make sure your cookies file is here: {os.path.abspath(COOKIE_FILE)}")
+    print("Cookies file:", os.path.abspath(COOKIE_FILE))
     app.run(host="0.0.0.0", port=8000, debug=True)
-

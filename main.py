@@ -73,3 +73,4 @@ if __name__ == "__main__":
             chosen_id = input("\nEnter format_id to download: ").strip()
             folder = input("Enter download folder (leave empty for current folder): ").strip()
             download_video(url, chosen_id, folder if folder else None)
+

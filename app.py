@@ -1,131 +1,75 @@
-from flask import Flask, request, render_template, send_file, redirect, url_for
 import yt_dlp
 import os
-import tempfile
-import shutil
-import time
-from functools import wraps
 
-app = Flask(__name__)
+def fetch_video_details(url):
+    """
+    Fetches video details and progressive mp4 formats using yt-dlp.
+    Returns a dictionary with video info and progressive formats only.
+    """
+    ydl_opts = {"quiet": True, "skip_download": True}
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as e:
+        return {"error": f"Failed to fetch video: {e}"}
 
-COOKIE_FILE = "cookies.txt"
-
-# Simple in-memory cache: video_url -> info (just for duration of service)
-cache = {}
-
-def timeout(seconds=20):
-    """Simple timeout decorator for functions."""
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            start = time.time()
-            result = func(*args, **kwargs)
-            elapsed = time.time() - start
-            if elapsed > seconds:
-                raise TimeoutError(f"Operation took too long ({elapsed:.1f}s)")
-            return result
-        return wrapper
-    return decorator
-
-def get_ydl_opts(format_id=None, download=False, tmpdir=None):
-    opts = {
-        "quiet": True,
-        "cookiefile": COOKIE_FILE if os.path.exists(COOKIE_FILE) else None,
-        "nocheckcertificate": True,
+    video_details = {
+        "title": info.get('title'),
+        "uploader": info.get('uploader'),
+        "duration": info.get('duration'),
+        "views": info.get('view_count'),
+        "formats": []
     }
-    if format_id:
-        opts["format"] = format_id
-    if download and tmpdir:
-        opts["outtmpl"] = os.path.join(tmpdir, "%(title)s.%(ext)s")
-    return {k: v for k, v in opts.items() if v is not None}
 
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    error = None
-    info = None
-    formats = []
+    for f in info.get('formats', []):
+        if f.get('ext') == 'mp4' and f.get('acodec') != 'none':  # progressive check
+            video_details["formats"].append({
+                "format_id": f.get('format_id'),
+                "resolution": f.get('height'),
+                "fps": f.get('fps'),
+                "filesize_mb": round(f.get('filesize_approx', 0)/(1024*1024), 2) if f.get('filesize_approx') else None,
+                "note": f.get('format_note'),
+            })
 
-    if request.method == 'POST':
-        url = request.form.get('url')
-        if not url:
-            error = "Please enter a URL"
-        else:
-            try:
-                # Check cache first
-                if url in cache:
-                    info = cache[url]
-                else:
-                    # Fetch info with timeout
-                    @timeout(seconds=25)
-                    def fetch_info(u):
-                        ydl_opts = get_ydl_opts()
-                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            return ydl.extract_info(u, download=False)
-                    
-                    info = fetch_info(url)
-                    # Cache it
-                    cache[url] = info
+    return video_details
 
-                # Filter progressive mp4 formats
-                for f in info.get('formats', []):
-                    if (f.get('ext') == 'mp4' and
-                        f.get('acodec') != 'none' and
-                        f.get('vcodec') != 'none'):
-                        formats.append({
-                            "format_id": f["format_id"],
-                            "resolution": f.get("height", "N/A"),
-                            "filesize": round((f.get("filesize") or f.get("filesize_approx") or 0) / (1024*1024), 2)
-                        })
-                        # Limit number of formats to avoid long listing loops
-                        if len(formats) >= 5:
-                            break
-
-                if not formats:
-                    error = "No progressive mp4 formats available for this video."
-
-            except TimeoutError as te:
-                error = f"Operation timed out: {te}"
-            except Exception as e:
-                error = f"Error fetching video info: {e}"
-
-    return render_template("index.html", info=info, formats=formats, error=error)
-
-@app.route('/download', methods=['POST'])
-def download():
-    url = request.form.get('url')
-    format_id = request.form.get('format_id')
-    if not url or not format_id:
-        return redirect(url_for('index'))
-
-    tmpdir = tempfile.mkdtemp()
-    ydl_opts = get_ydl_opts(format_id=format_id, download=True, tmpdir=tmpdir)
+def download_video(url, format_id, output_dir=None):
+    """
+    Downloads the selected progressive video.
+    """
+    ydl_opts = {
+        "format": f"{format_id}",  # progressive already has audio
+        "outtmpl": os.path.join(output_dir if output_dir else ".", "%(title)s.%(ext)s")
+    }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
+            ydl.download([url])
+        print("✅ Download complete!")
     except Exception as e:
-        shutil.rmtree(tmpdir)
-        return f"Download failed: {e}", 500
+        print(f"❌ Download failed: {e}")
 
-    # Send file
-    response = send_file(
-        filename,
-        as_attachment=True,
-        download_name=os.path.basename(filename)
-    )
 
-    @response.call_on_close
-    def cleanup():
-        shutil.rmtree(tmpdir)
-
-    return response
-
+# ----------------- Main ----------------- #
 if __name__ == "__main__":
-    if not os.path.exists(COOKIE_FILE):
-        print("❌ cookies.txt NOT FOUND!")
-    else:
-        print("✅ cookies.txt FOUND:", os.path.abspath(COOKIE_FILE))
+    url = input("Enter YouTube URL: ").strip()
+    details = fetch_video_details(url)
 
-    print("Cookies file:", os.path.abspath(COOKIE_FILE))
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    if "error" in details:
+        print(details["error"])
+    else:
+        print(f"\nTitle: {details['title']}")
+        print(f"Uploader: {details['uploader']}")
+        print(f"Duration: {details['duration']} seconds")
+        print(f"Views: {details['views']}\n")
+
+        if not details["formats"]:
+            print("⚠ No progressive mp4 formats available!")
+        else:
+            print("Available progressive mp4 formats:")
+            for f in details["formats"]:
+                print(f"  format_id: {f['format_id']}, res: {f['resolution']}p, fps: {f['fps']}, size: {f['filesize_mb']} MB, note: {f['note']}")
+
+            chosen_id = input("\nEnter format_id to download: ").strip()
+            folder = input("Enter download folder (leave empty for current folder): ").strip()
+            download_video(url, chosen_id, folder if folder else None)

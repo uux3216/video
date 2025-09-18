@@ -122,5 +122,10 @@ def download():
     return response
 
 if __name__ == "__main__":
+    if not os.path.exists(COOKIE_FILE):
+        print("❌ cookies.txt NOT FOUND!")
+    else:
+        print("✅ cookies.txt FOUND:", os.path.abspath(COOKIE_FILE))
+
     print("Cookies file:", os.path.abspath(COOKIE_FILE))
     app.run(host="0.0.0.0", port=8000, debug=True)
